@@ -61,4 +61,15 @@ pub mod remesa_liquidez {
     pub fn set_merchant_status(ctx: Context<SetMerchantStatus>, active: bool) -> Result<()> {
         instructions::register_merchant::set_status_handler(ctx, active)
     }
+
+    /// One-shot bootstrap: persists the protocol admin pubkey in a singleton
+    /// Config PDA. Required before any treasury withdrawal.
+    pub fn initialize_config(ctx: Context<InitializeConfig>) -> Result<()> {
+        instructions::initialize_config::handler(ctx)
+    }
+
+    /// Drain accumulated fees from the per-mint treasury vault. Admin-only.
+    pub fn withdraw_treasury(ctx: Context<WithdrawTreasury>, amount: u64) -> Result<()> {
+        instructions::withdraw_treasury::handler(ctx, amount)
+    }
 }

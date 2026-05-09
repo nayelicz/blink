@@ -13,6 +13,7 @@ export const VAULT_SEED = Buffer.from("vault");
 export const MERCHANT_SEED = Buffer.from("merchant");
 export const TREASURY_AUTHORITY_SEED = Buffer.from("treasury");
 export const TREASURY_VAULT_SEED = Buffer.from("treasury_vault");
+export const CONFIG_SEED = Buffer.from("config");
 
 /** Protocol fee in basis points charged on every successful validate_cashout. */
 export const FEE_BPS = 25;
@@ -64,6 +65,10 @@ export function findTreasuryTokenAccountPda(
     [TREASURY_VAULT_SEED, mint.toBuffer()],
     programId
   );
+}
+
+export function findConfigPda(programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([CONFIG_SEED], programId);
 }
 
 export interface InitializeReservationArgs {
@@ -235,6 +240,57 @@ export async function buildSetMerchantStatusIx(
     .accountsStrict({
       admin: args.admin,
       merchantAccount,
+    })
+    .instruction();
+}
+
+export interface InitializeConfigArgs {
+  program: RemesaProgram;
+  admin: PublicKey;
+}
+
+export async function buildInitializeConfigIx(
+  args: InitializeConfigArgs
+): Promise<TransactionInstruction> {
+  const [config] = findConfigPda(args.program.programId);
+  return args.program.methods
+    .initializeConfig()
+    .accountsStrict({
+      admin: args.admin,
+      config,
+      systemProgram: SystemProgram.programId,
+    })
+    .instruction();
+}
+
+export interface WithdrawTreasuryArgs {
+  program: RemesaProgram;
+  admin: PublicKey;
+  mint: PublicKey;
+  destinationTokenAccount: PublicKey;
+  amount: BN | number | bigint;
+}
+
+export async function buildWithdrawTreasuryIx(
+  args: WithdrawTreasuryArgs
+): Promise<TransactionInstruction> {
+  const [config] = findConfigPda(args.program.programId);
+  const [treasuryAuthority] = findTreasuryAuthorityPda(args.program.programId);
+  const [treasuryTokenAccount] = findTreasuryTokenAccountPda(
+    args.program.programId,
+    args.mint
+  );
+
+  return args.program.methods
+    .withdrawTreasury(new BN(args.amount.toString()))
+    .accountsStrict({
+      admin: args.admin,
+      config,
+      mint: args.mint,
+      treasuryAuthority,
+      treasuryTokenAccount,
+      destinationTokenAccount: args.destinationTokenAccount,
+      tokenProgram: TOKEN_PROGRAM_ID,
     })
     .instruction();
 }

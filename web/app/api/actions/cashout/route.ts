@@ -5,90 +5,34 @@ import {
   type ActionPostRequest,
   type ActionPostResponse,
 } from "@solana/actions";
-import { AnchorProvider, Program, type Idl } from "@coral-xyz/anchor";
 import {
-  Connection,
-  Keypair,
   PublicKey,
   SystemProgram,
   SYSVAR_RENT_PUBKEY,
   Transaction,
-  VersionedTransaction,
-  clusterApiUrl,
-  type Cluster,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 
-import idl from "@root/target/idl/remesa_liquidez.json";
-import type { RemesaLiquidez } from "@root/target/types/remesa_liquidez";
 import {
   findMerchantPda,
   findTreasuryAuthorityPda,
   findTreasuryTokenAccountPda,
   findVaultPda,
 } from "@root/client";
+import { ACTION_ICON_URL, getConnection, getProgram } from "@/lib/anchor";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const ICON_URL =
-  process.env.NEXT_PUBLIC_BLINK_ICON_URL ??
-  "https://images.unsplash.com/photo-1556742031-c6961e8560b0?auto=format&fit=crop&w=1200&q=80";
+const ICON_URL = ACTION_ICON_URL;
 
 const TITLE = "Retiro de Efectivo - TIA";
 const DESCRIPTION =
   "Estás a punto de validar la entrega de efectivo. Asegúrate de haber verificado la identidad del receptor mediante World ID antes de firmar.";
 const LABEL = "Finalizar Entrega";
-
-function getCluster(): Cluster {
-  const raw =
-    process.env.SOLANA_CLUSTER ??
-    process.env.NEXT_PUBLIC_SOLANA_CLUSTER ??
-    "devnet";
-  if (raw === "mainnet-beta" || raw === "testnet" || raw === "devnet") {
-    return raw;
-  }
-  return "devnet";
-}
-
-function getConnection(): Connection {
-  const rpcUrl =
-    process.env.SOLANA_RPC_URL ??
-    process.env.NEXT_PUBLIC_SOLANA_RPC_URL ??
-    clusterApiUrl(getCluster());
-  return new Connection(rpcUrl, "confirmed");
-}
-
-/**
- * Minimal read-only wallet so we can instantiate AnchorProvider on the server
- * (we never sign anything here — the merchant signs in their wallet client).
- */
-function readOnlyWallet() {
-  const kp = Keypair.generate();
-  return {
-    publicKey: kp.publicKey,
-    signTransaction: async <T extends Transaction | VersionedTransaction>(
-      tx: T
-    ): Promise<T> => tx,
-    signAllTransactions: async <T extends Transaction | VersionedTransaction>(
-      txs: T[]
-    ): Promise<T[]> => txs,
-    payer: kp,
-  };
-}
-
-function getProgram(connection: Connection): Program<RemesaLiquidez> {
-  const provider = new AnchorProvider(connection, readOnlyWallet(), {
-    commitment: "confirmed",
-  });
-  return new Program<RemesaLiquidez>(
-    idl as unknown as Idl,
-    provider
-  ) as unknown as Program<RemesaLiquidez>;
-}
 
 function jsonWithCors(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {

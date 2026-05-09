@@ -21,11 +21,14 @@ import {
   BPS_DENOMINATOR,
   FEE_BPS,
   buildCancelReservationIx,
+  buildInitializeConfigIx,
   buildInitializeReservationIx,
   buildMarkVerifiedIx,
   buildRegisterMerchantIx,
   buildSetMerchantStatusIx,
   buildValidateCashoutIx,
+  buildWithdrawTreasuryIx,
+  findConfigPda,
   findReservationPda,
   findTreasuryTokenAccountPda,
   findVaultPda,
@@ -40,6 +43,14 @@ describe("remesa-liquidez", () => {
   const admin = (provider.wallet as anchor.Wallet).payer;
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  before("bootstrap protocol Config (idempotent across the suite)", async () => {
+    const [configPda] = findConfigPda(program.programId);
+    const existing = await connection.getAccountInfo(configPda);
+    if (existing) return;
+    const ix = await buildInitializeConfigIx({ program, admin: admin.publicKey });
+    await provider.sendAndConfirm(new Transaction().add(ix), [admin]);
+  });
 
   async function airdrop(pk: PublicKey, sol = 2) {
     const sig = await connection.requestAirdrop(pk, sol * LAMPORTS_PER_SOL);
@@ -450,6 +461,139 @@ describe("remesa-liquidez", () => {
       expect.fail("expected InvalidMerchant");
     } catch (e: any) {
       expect(e.toString()).to.match(/InvalidMerchant/i);
+    }
+  });
+
+  it("withdraw_treasury: admin can drain accumulated fees to a destination ATA", async () => {
+    const s = await setup();
+    const amount = await initialize(s, 800_000_000);
+    await markVerified(s);
+    await provider.sendAndConfirm(
+      new Transaction().add(
+        await buildValidateCashoutIx({
+          program,
+          receiver: s.receiver.publicKey,
+          merchant: s.merchant.publicKey,
+          mint: s.mint,
+          merchantTokenAccount: s.merchantAta,
+        })
+      ),
+      [s.merchant]
+    );
+
+    const expectedFee = Math.floor((amount * FEE_BPS) / BPS_DENOMINATOR);
+    const [treasuryTokenAccount] = findTreasuryTokenAccountPda(
+      program.programId,
+      s.mint
+    );
+    const treasuryBefore = await getAccount(connection, treasuryTokenAccount);
+    expect(Number(treasuryBefore.amount)).to.be.greaterThanOrEqual(expectedFee);
+
+    const adminAta = await getOrCreateAssociatedTokenAccount(
+      connection,
+      admin,
+      s.mint,
+      admin.publicKey
+    );
+    const adminBefore = await getAccount(connection, adminAta.address);
+
+    const wIx = await buildWithdrawTreasuryIx({
+      program,
+      admin: admin.publicKey,
+      mint: s.mint,
+      destinationTokenAccount: adminAta.address,
+      amount: expectedFee,
+    });
+    await provider.sendAndConfirm(new Transaction().add(wIx), [admin]);
+
+    const adminAfter = await getAccount(connection, adminAta.address);
+    expect(Number(adminAfter.amount) - Number(adminBefore.amount)).to.equal(
+      expectedFee
+    );
+
+    const treasuryAfter = await getAccount(connection, treasuryTokenAccount);
+    expect(Number(treasuryBefore.amount) - Number(treasuryAfter.amount)).to.equal(
+      expectedFee
+    );
+  });
+
+  it("withdraw_treasury: non-admin signer is rejected (UnauthorizedAdmin)", async () => {
+    const s = await setup();
+    await initialize(s);
+    await markVerified(s);
+    await provider.sendAndConfirm(
+      new Transaction().add(
+        await buildValidateCashoutIx({
+          program,
+          receiver: s.receiver.publicKey,
+          merchant: s.merchant.publicKey,
+          mint: s.mint,
+          merchantTokenAccount: s.merchantAta,
+        })
+      ),
+      [s.merchant]
+    );
+
+    const intruder = Keypair.generate();
+    await airdrop(intruder.publicKey);
+    const intruderAta = await getOrCreateAssociatedTokenAccount(
+      connection,
+      admin,
+      s.mint,
+      intruder.publicKey
+    );
+
+    const wIx = await buildWithdrawTreasuryIx({
+      program,
+      admin: intruder.publicKey,
+      mint: s.mint,
+      destinationTokenAccount: intruderAta.address,
+      amount: 1,
+    });
+    try {
+      await provider.sendAndConfirm(new Transaction().add(wIx), [intruder]);
+      expect.fail("expected UnauthorizedAdmin");
+    } catch (e: any) {
+      expect(e.toString()).to.match(/UnauthorizedAdmin|not the protocol admin/i);
+    }
+  });
+
+  it("withdraw_treasury: InsufficientTreasury when amount exceeds balance", async () => {
+    const s = await setup();
+    await initialize(s);
+    await markVerified(s);
+    await provider.sendAndConfirm(
+      new Transaction().add(
+        await buildValidateCashoutIx({
+          program,
+          receiver: s.receiver.publicKey,
+          merchant: s.merchant.publicKey,
+          mint: s.mint,
+          merchantTokenAccount: s.merchantAta,
+        })
+      ),
+      [s.merchant]
+    );
+
+    const adminAta = await getOrCreateAssociatedTokenAccount(
+      connection,
+      admin,
+      s.mint,
+      admin.publicKey
+    );
+
+    const wIx = await buildWithdrawTreasuryIx({
+      program,
+      admin: admin.publicKey,
+      mint: s.mint,
+      destinationTokenAccount: adminAta.address,
+      amount: 10_000_000_000_000,
+    });
+    try {
+      await provider.sendAndConfirm(new Transaction().add(wIx), [admin]);
+      expect.fail("expected InsufficientTreasury");
+    } catch (e: any) {
+      expect(e.toString()).to.match(/InsufficientTreasury|insufficient/i);
     }
   });
 

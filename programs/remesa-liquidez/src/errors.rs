@@ -28,4 +28,8 @@ pub enum ErrorCode {
     ReceiverNotVerified,
     #[msg("Reservation has already been marked as verified")]
     AlreadyVerified,
+    #[msg("Caller is not the protocol admin")]
+    UnauthorizedAdmin,
+    #[msg("Treasury vault has insufficient funds for the requested withdrawal")]
+    InsufficientTreasury,
 }

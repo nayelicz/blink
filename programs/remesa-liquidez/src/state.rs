@@ -69,3 +69,20 @@ impl MerchantAccount {
 
     pub const SEED_PREFIX: &'static [u8] = b"merchant";
 }
+
+/// Singleton governance account that owns the protocol treasury. Its pubkey
+/// is `[CONFIG_SEED]`. The `admin` is the only account allowed to drain the
+/// per-mint treasury vaults via `withdraw_treasury`.
+#[account]
+#[derive(Debug)]
+pub struct Config {
+    pub admin: Pubkey,
+    pub bump: u8,
+}
+
+impl Config {
+    /// 8 (disc) + 32 (admin) + 1 (bump).
+    pub const SPACE: usize = 8 + 32 + 1;
+
+    pub const SEED_PREFIX: &'static [u8] = b"config";
+}
