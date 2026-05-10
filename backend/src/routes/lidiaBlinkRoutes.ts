@@ -44,7 +44,12 @@ router.get("/api/actions/lidia-retiro/preview", async (req: Request, res: Respon
       hour: "2-digit", minute: "2-digit", timeZone: "America/Mexico_City",
     });
     const amountMXN  = (amountUSDC * 17.20).toFixed(0);
-    const blinkUrl   = `solana-action:${BASE_URL}/api/actions/lidia-retiro?amount=${amountUSDC}&zone=${encodeURIComponent(zone)}${wallet ? `&wallet=${wallet}` : ""}`;
+    const pdaParam   = req.query.pda as string | undefined;
+    const blinkUrl   = pdaParam
+      ? `solana-action:https://web-coral-pi-66.vercel.app/api/actions/cashout?pda=${pdaParam}`
+      : `solana-action:${BASE_URL}/api/actions/lidia-retiro?amount=${amountUSDC}&zone=${encodeURIComponent(zone)}${wallet ? `&wallet=${wallet}` : ""}`;
+    const pageTitle  = pdaParam ? "Validar retiro en tienda" : `Retiro de $${amountUSDC} USDC`;
+    const btnLabel   = pdaParam ? "🏪 Validar cashout (comerciante)" : "🎟 Abrir con wallet Solana";
     const description = `💰 $${amountUSDC} USDC (~$${amountMXN} MXN) · ✨ +$${decision.cashbackUSDC} USDC cashback si retiras a las ${hora} · 📍 ${store?.storeName ?? "Tienda cercana"}`;
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -85,10 +90,10 @@ router.get("/api/actions/lidia-retiro/preview", async (req: Request, res: Respon
 <body>
   <div class="card">
     <img src="${BASE_URL}/lidia-icon.png" alt="LidIA"/>
-    <h1>Retiro de $${amountUSDC} USDC</h1>
+    <h1>${pageTitle}</h1>
     <p>~$${amountMXN} MXN disponibles para retirar</p>
     <div class="cashback">✨ Cashback disponible: +$${decision.cashbackUSDC} USDC si retiras a las ${hora}</div>
-    <a class="blink-btn" href="${blinkUrl}">🎟 Abrir con wallet Solana</a>
+    <a class="blink-btn" href="${blinkUrl}">${btnLabel}</a>
     <div class="store">📍 ${store?.storeName ?? "Tienda cercana"} · ${store?.zone ?? ""}</div>
   </div>
 </body>
