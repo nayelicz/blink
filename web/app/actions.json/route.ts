@@ -10,6 +10,8 @@ export const runtime = "edge";
  */
 const payload: ActionsJson = {
   rules: [
+    { pathPattern: "/verificar/**", apiPath: "/api/actions/verify" },
+    { pathPattern: "/remesa/**", apiPath: "/api/actions/cashout" },
     { pathPattern: "/api/actions/cashout", apiPath: "/api/actions/cashout" },
     { pathPattern: "/api/actions/verify", apiPath: "/api/actions/verify" },
     { pathPattern: "/blink/cashout", apiPath: "/api/actions/cashout" },

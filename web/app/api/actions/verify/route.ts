@@ -5,25 +5,26 @@ import {
   type ActionPostRequest,
   type ActionPostResponse,
 } from "@solana/actions";
-import {
-  PublicKey,
-  Transaction,
-} from "@solana/web3.js";
+import { PublicKey, Transaction } from "@solana/web3.js";
 
-import { findReservationPda } from "@/lib/pdas";
-import {
-  ACTION_ICON_URL,
-  getConnection,
-  getProgram,
-} from "@/lib/anchor";
+import { ACTION_ICON_URL, getConnection, getProgram } from "@/lib/anchor";
+import { buildMarkVerifiedIx } from "@/lib/instructions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const TITLE = "Verificar Receptor (World ID)";
+const TITLE = "TIA: Desbloquear Fondos";
 const DESCRIPTION =
-  "Confirma que el receptor completó la verificación de humanidad con World ID. Esta firma desbloquea el cobro en el comercio sin que el receptor tenga que firmar en la POS.";
-const LABEL = "Marcar Verificado";
+  "El receptor ha completado su validación de identidad. Al confirmar, permitirás que el comercio entregue el efectivo de forma segura.";
+const LABEL = "Aprobar Retiro";
+const LABEL_ALREADY_APPROVED = "Retiro ya aprobado";
+
+/**
+ * Icono dedicado al flow de verificación (orb/identidad). Se puede sobre-escribir
+ * con `NEXT_PUBLIC_VERIFY_ICON_URL` para mantener consistencia con la marca World ID.
+ */
+const VERIFY_ICON_URL =
+  process.env.NEXT_PUBLIC_VERIFY_ICON_URL ?? ACTION_ICON_URL;
 
 function jsonWithCors(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
@@ -36,65 +37,110 @@ function jsonWithCors(body: unknown, init: ResponseInit = {}) {
   });
 }
 
+function parsePubkey(raw: string | null): PublicKey | null {
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw);
+  } catch {
+    return null;
+  }
+}
+
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: ACTIONS_CORS_HEADERS });
 }
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const receiver = url.searchParams.get("receiver");
+  const pdaRaw = url.searchParams.get("pda");
 
-  if (!receiver) {
+  if (!pdaRaw) {
     const errResponse: ActionGetResponse = {
-      icon: ACTION_ICON_URL,
+      icon: VERIFY_ICON_URL,
       title: TITLE,
       label: LABEL,
       description:
-        "Falta el parámetro 'receiver'. La Mini App debe pasar la pubkey del receptor verificado.",
+        "Falta el parámetro 'pda' (TurnReservation). Reescanea el QR del receptor o revisa el enlace de la blink.",
+      disabled: true,
+    };
+    return jsonWithCors(errResponse, { status: 400 });
+  }
+
+  const reservationPda = parsePubkey(pdaRaw);
+  if (!reservationPda) {
+    const errResponse: ActionGetResponse = {
+      icon: VERIFY_ICON_URL,
+      title: TITLE,
+      label: LABEL,
+      description: "El parámetro 'pda' no es una llave pública válida.",
       disabled: true,
     };
     return jsonWithCors(errResponse, { status: 400 });
   }
 
   try {
-    new PublicKey(receiver);
-  } catch {
-    const errResponse: ActionGetResponse = {
-      icon: ACTION_ICON_URL,
+    const connection = getConnection();
+    const program = getProgram(connection);
+
+    const reservation = await program.account.turnReservation.fetchNullable(
+      reservationPda
+    );
+
+    if (!reservation) {
+      const errResponse: ActionGetResponse = {
+        icon: VERIFY_ICON_URL,
+        title: TITLE,
+        label: LABEL,
+        description:
+          "TurnReservation no encontrada. Verifica que la reserva exista en devnet antes de aprobar.",
+        disabled: true,
+      };
+      return jsonWithCors(errResponse, { status: 404 });
+    }
+
+    if (reservation.isVerified === true) {
+      const alreadyVerified: ActionGetResponse = {
+        icon: VERIFY_ICON_URL,
+        title: TITLE,
+        label: LABEL_ALREADY_APPROVED,
+        description:
+          "Esta reserva ya fue marcada como verificada. El receptor puede cobrar en cualquier comercio whitelisteado sin firmar de nuevo.",
+        disabled: true,
+      };
+      return jsonWithCors(alreadyVerified);
+    }
+
+    const response: ActionGetResponse = {
+      icon: VERIFY_ICON_URL,
       title: TITLE,
       label: LABEL,
-      description: "El parámetro 'receiver' no es una llave pública válida.",
+      description: DESCRIPTION,
+    };
+    return jsonWithCors(response);
+  } catch (err) {
+    console.error("[GET /api/actions/verify] error:", err);
+    const errResponse: ActionGetResponse = {
+      icon: VERIFY_ICON_URL,
+      title: TITLE,
+      label: LABEL,
+      description:
+        "No se pudo leer el estado de la reserva en este momento. Reintenta en unos segundos.",
       disabled: true,
     };
-    return jsonWithCors(errResponse, { status: 400 });
+    return jsonWithCors(errResponse, { status: 503 });
   }
-
-  const response: ActionGetResponse = {
-    icon: ACTION_ICON_URL,
-    title: TITLE,
-    label: LABEL,
-    description: DESCRIPTION,
-  };
-  return jsonWithCors(response);
 }
 
 export async function POST(req: Request) {
   try {
     const url = new URL(req.url);
-    const receiverParam = url.searchParams.get("receiver");
-    if (!receiverParam) {
+    const reservationPda = parsePubkey(url.searchParams.get("pda"));
+    if (!reservationPda) {
       return jsonWithCors(
-        { message: "Missing required query parameter: receiver" },
-        { status: 400 }
-      );
-    }
-
-    let receiver: PublicKey;
-    try {
-      receiver = new PublicKey(receiverParam);
-    } catch {
-      return jsonWithCors(
-        { message: "Invalid 'receiver' query parameter" },
+        {
+          message:
+            "Missing or invalid 'pda' query parameter (TurnReservation PDA).",
+        },
         { status: 400 }
       );
     }
@@ -111,7 +157,7 @@ export async function POST(req: Request) {
 
     if (!body?.account) {
       return jsonWithCors(
-        { message: "Missing 'account' (sender pubkey) in body" },
+        { message: "Missing 'account' (sender pubkey) in body." },
         { status: 400 }
       );
     }
@@ -121,7 +167,7 @@ export async function POST(req: Request) {
       sender = new PublicKey(body.account);
     } catch {
       return jsonWithCors(
-        { message: "Invalid 'account' (not a Solana pubkey)" },
+        { message: "Invalid 'account' (not a Solana pubkey)." },
         { status: 400 }
       );
     }
@@ -129,7 +175,6 @@ export async function POST(req: Request) {
     const connection = getConnection();
     const program = getProgram(connection);
 
-    const [reservationPda] = findReservationPda(program.programId, receiver);
     const reservation = await program.account.turnReservation.fetchNullable(
       reservationPda
     );
@@ -137,7 +182,7 @@ export async function POST(req: Request) {
       return jsonWithCors(
         {
           message:
-            "TurnReservation no encontrada para ese receptor. Crea la reserva primero.",
+            "TurnReservation no encontrada para esa PDA. Verifica el enlace de la blink.",
         },
         { status: 404 }
       );
@@ -147,29 +192,27 @@ export async function POST(req: Request) {
       return jsonWithCors(
         {
           message:
-            "Sólo el sender original de la reserva puede marcarla como verificada.",
+            "Sólo el sender original de la reserva puede aprobar el retiro.",
         },
         { status: 403 }
       );
     }
 
-    if (reservation.isVerified) {
+    if (reservation.isVerified === true) {
       return jsonWithCors(
-        { message: "Esta reserva ya está marcada como verificada." },
+        { message: "Esta reserva ya fue marcada como verificada." },
         { status: 409 }
       );
     }
 
-    const ix = await program.methods
-      .markVerified()
-      .accountsStrict({
-        sender,
-        reservation: reservationPda,
-      })
-      .instruction();
+    const ix = await buildMarkVerifiedIx(program, {
+      sender,
+      reservation: reservationPda,
+    });
 
-    const { blockhash, lastValidBlockHeight } =
-      await connection.getLatestBlockhash("confirmed");
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash(
+      "confirmed"
+    );
 
     const tx = new Transaction({
       feePayer: sender,
@@ -182,7 +225,7 @@ export async function POST(req: Request) {
       fields: {
         type: "transaction",
         transaction: tx,
-        message: `Confirmar verificación World ID para ${receiver.toBase58()}. Tras esta firma el receptor podrá cobrar en cualquier comercio whitelisteado sin firmar de nuevo.`,
+        message: `Aprobar retiro para la reserva ${reservationPda.toBase58()}. Tras esta firma el receptor podrá cobrar el efectivo en cualquier comercio whitelisteado.`,
       },
     });
 
