@@ -23,12 +23,12 @@ flowchart LR
   EVM[EVM Wallet] -->|GET /api/bridge/quote| LIFI[LI.FI SDK]
   LIFI -->|USDC SPL a Solana| SenderWallet[Sender Wallet]
   SenderWallet -->|initialize_reservation| Escrow[Escrow PDA]
-  WorldID[World ID] -->|POST /api/lidia/notify| Render[LidIA en Render]
-  Render -->|mark_verified tx| Escrow
+  WorldID[World ID] -->|POST /api/lidia/notify| LidIA[LidIA Backend]
+  LidIA -->|mark_verified tx| Escrow
   Escrow -->|trigger| NotifyAPI[POST /api/notify/verified]
   NotifyAPI -->|TTS audio| ElevenLabs[ElevenLabs]
-  ElevenLabs -->|base64 mp3| Render
-  Render -->|WhatsApp audio| Receiver[Receiver]
+  ElevenLabs -->|base64 mp3| LidIA
+  LidIA -->|WhatsApp audio| Receiver[Receiver]
   Merchant -->|validate_cashout Blink| Escrow
   Escrow -->|99.75% payout| MerchantATA[Merchant ATA]
   Escrow -->|0.25% fee| Treasury[Treasury Vault]
